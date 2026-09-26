@@ -4,6 +4,8 @@ import ipaddress
 import re
 import requests
 import base64
+import sys
+import logging
 from urllib.parse import urlparse, unquote, parse_qs
 from email.message import EmailMessage
 from bs4 import BeautifulSoup
@@ -13,15 +15,26 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    stream=sys.stderr
+)
+logger = logging.getLogger(__name__)
+
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.modify',
-    'https://mail.google.com/',
     'https://www.googleapis.com/auth/gmail.settings.basic'
 ]
 
 mcp = FastMCP("Gmail Server")
 
+_service = None
 def get_gmail_service():
+    global _service
+    if _service:
+        return _service
+
     creds = None
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
@@ -31,7 +44,7 @@ def get_gmail_service():
             creds.refresh(Request())
         else:
             if not os.path.exists('credentials.json'):
-                print("WARNING: credentials.json not found! You must download it from Google Cloud Console.")
+                logger.warning("credentials.json not found! You must download it from Google Cloud Console.")
                 return None
             flow = InstalledAppFlow.from_client_secrets_file(
                 'credentials.json', SCOPES)
@@ -39,9 +52,9 @@ def get_gmail_service():
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
 
-    return build('gmail', 'v1', credentials=creds)
+    _service = build('gmail', 'v1', credentials=creds)
+    return _service
 
-service = get_gmail_service()
 
 # --- Helper Functions ---
 def _extract_body(part):
@@ -117,6 +130,7 @@ def _is_safe_url(url: str):
 def read_recent_emails(limit: int = 5) -> str:
     """Reads the most recent emails from the user's Gmail inbox. 
     IMPORTANT: This returns a list of emails. Each email has an 'ID' field. You MUST save and use this exact 'ID' if you need to read the full content, reply, forward, or delete the email later."""
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -128,11 +142,11 @@ def read_recent_emails(limit: int = 5) -> str:
     
         email_data = []
         for msg in messages:
-            txt = service.users().messages().get(userId="me", id=msg["id"]).execute()
+            txt = service.users().messages().get(userId="me", id=msg["id"], format="metadata", metadataHeaders=["From", "To", "Subject", "Date", "Message-ID"]).execute()
             parsed = _parse_email(txt)
 
             snippet = txt.get("snippet", "No preview available")
-            email_data.append(f"- ID: {msg['id']} | Message-ID: {parsed['message_id']} | Date: {parsed['date']} | From: {parsed['sender']} | To: {parsed['recipient']} | Subject: {parsed['subject']} | Snippet: {snippet}")
+            email_data.append(f"- ID: {msg['id']} | Message-ID: {parsed['message_id']} | Date: {parsed['date']} | From: {parsed['sender']} | To: {parsed['recipient']} | Subject: <email_subject>{parsed['subject']}</email_subject> | Snippet: <email_snippet>{snippet}</email_snippet>")
     
         return "\n".join(email_data)
 
@@ -145,6 +159,7 @@ def search_emails(query: str) -> str:
     Searches for emails in the user's Gmail account based on a query. 
     IMPORTANT: This returns a list of emails. Each email has an 'ID' field. You MUST save and use this exact 'ID' if you need to read the full content, reply, forward, or delete the email later.
     """
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -156,11 +171,11 @@ def search_emails(query: str) -> str:
     
         email_data = []
         for msg in messages:
-            txt = service.users().messages().get(userId="me", id=msg["id"]).execute()
+            txt = service.users().messages().get(userId="me", id=msg["id"], format="metadata", metadataHeaders=["From", "To", "Subject", "Date", "Message-ID"]).execute()
             parsed = _parse_email(txt)
 
             snippet = txt.get("snippet", "No preview available")
-            email_data.append(f"- ID: {msg['id']} | Message-ID: {parsed['message_id']} | Date: {parsed['date']} | From: {parsed['sender']} | To: {parsed['recipient']} | Subject: {parsed['subject']} | Snippet: {snippet}")
+            email_data.append(f"- ID: {msg['id']} | Message-ID: {parsed['message_id']} | Date: {parsed['date']} | From: {parsed['sender']} | To: {parsed['recipient']} | Subject: <email_subject>{parsed['subject']}</email_subject> | Snippet: <email_snippet>{snippet}</email_snippet>")
     
         return "\n".join(email_data)
 
@@ -171,6 +186,7 @@ def search_emails(query: str) -> str:
 def read_email_content(email_id: str) -> str:
     """Reads the full content of a specific email in the user's Gmail account.
     You MUST provide the 'email_id' parameter. You can find the email_id by first calling the 'read_recent_emails' or 'search_emails' tools and looking for the 'ID:' field in the results."""
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -182,7 +198,7 @@ def read_email_content(email_id: str) -> str:
             body = body[:2000] + "\n\n...[EMAIL BODY TRUNCATED TO SAVE TOKENS]..."
             
         cc_string = f" | Cc: {parsed['cc']}" if parsed['cc'] else ""
-        return f"- ID: {email_id} | Message-ID: {parsed['message_id']} | Date: {parsed['date']} | From: {parsed['sender']} | To: {parsed['recipient']}{cc_string} | Reply-to: {parsed['reply_to']} | In-Reply-To: {parsed['in_reply_to']} | References: {parsed['references']} | Subject: {parsed['subject']} | Body:\n{body}"
+        return f"- ID: {email_id} | Message-ID: {parsed['message_id']} | Date: {parsed['date']} | From: {parsed['sender']} | To: {parsed['recipient']}{cc_string} | Reply-to: {parsed['reply_to']} | In-Reply-To: {parsed['in_reply_to']} | References: {parsed['references']} | Subject: <email_subject>{parsed['subject']}</email_subject> | Body:\n<email_body>\n{body}\n</email_body>"
         
     except Exception as error:
         return f"An error occurred reading the email content: {error}"
@@ -191,6 +207,7 @@ def read_email_content(email_id: str) -> str:
 @mcp.tool()
 def create_label(label_name: str) -> str:
     """Creates a new label in the user's Gmail account."""
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -206,6 +223,7 @@ def create_label(label_name: str) -> str:
 @mcp.tool()
 def list_labels() -> str:
     """Lists all labels in the user's Gmail account."""
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -226,6 +244,7 @@ def list_labels() -> str:
 @mcp.tool()
 def apply_label(email_id: str, label_id: str) -> str:
     """Applies a label to a message in the user's Gmail account."""
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -241,6 +260,7 @@ def remove_label(email_id: str, label_id: str) -> str:
     """Removes a label from a message in the user's Gmail account.
     Also you can use this tool to mark email as read by setting the label_id to "UNREAD".
     """
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -254,6 +274,7 @@ def remove_label(email_id: str, label_id: str) -> str:
 @mcp.tool()
 def delete_label(label_id: str) -> str:
     """Deletes a label from the user's Gmail account. """
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -265,6 +286,7 @@ def delete_label(label_id: str) -> str:
 @mcp.tool()
 def count_messages_in_label(label_id: str) -> str:
     """Counts the number of messages in a specific label in the user's Gmail account."""
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -284,6 +306,7 @@ def delete_message(email_id: str) -> str:
     CRITICAL: NEVER guess or hallucinate the ID. If you don't know the exact ID, you MUST call 'read_recent_emails' or 'search_emails' FIRST and wait for the results. Do NOT call this tool and a search tool in the same turn.
     Note: To undo a deletion, use the `untrash_message` tool.
     """
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -303,6 +326,7 @@ def untrash_message(email_id: str) -> str:
     Removes an email from the trash and restores it to the inbox.
     Use this tool if the user asks to undo a deletion, restore a deleted email, or move an email out of the trash.
     """
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -315,6 +339,7 @@ def untrash_message(email_id: str) -> str:
 @mcp.tool()
 def delete_draft(draft_id: str) -> str:
     """Deletes a draft from the user's Gmail account."""
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -326,6 +351,7 @@ def delete_draft(draft_id: str) -> str:
 @mcp.tool()
 def list_drafts() -> str:
     """Lists all drafts and its details (To, Subject, Body) in the user's Gmail account."""
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -363,6 +389,7 @@ def list_drafts() -> str:
 @mcp.tool()
 def create_draft(to: str, subject: str, message: str) -> str:
     """Creates a draft with To, Subject and Message in the user's Gmail account."""
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -386,6 +413,7 @@ def create_draft(to: str, subject: str, message: str) -> str:
 @mcp.tool()
 def modify_draft(draft_id: str, to: str, subject: str, message: str) -> str:
     """Modifies a draft in the user's Gmail account."""
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -433,6 +461,7 @@ def send_draft(draft_id: str) -> str:
     CRITICAL: MUST ONLY BE USED AFTER EXPLICIT USER APPROVAL of the draft content.
     CRITICAL: You MUST NOT call this tool in the same turn as 'create_draft', 'create_response_draft', or 'forward_email'. You must create the draft first, show it to the user, and wait for their approval in the next turn before sending.
     """
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -452,6 +481,7 @@ def create_response_draft(to: str, subject: str, message: str, in_reply_to: str)
         message (str): The body of the email.
         in_reply_to (str): The ID of the email to reply to.
     """
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -504,35 +534,26 @@ def forward_email(to: str, subject: str, message: str, in_reply_to: str) -> str:
         message (str): The body of the email.
         in_reply_to (str): The ID of the email to forward.
     """
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
         original_msg = service.users().messages().get(userId="me", id=in_reply_to, format="full").execute()
         thread_id = original_msg.get('threadId')
         
-        headers = original_msg.get('payload', {}).get('headers', [])
-        message_id = ""
-        references = ""
-        payload = original_msg.get('payload', {}) 
-        original_body = ""
-
-        if "parts" in payload:
-            for part in payload["parts"]:
-                if part["mimeType"] == "text/plain":
-                    data = part["body"].get("data")
-                    if data:
-                        original_body = base64.urlsafe_b64decode(data).decode()
-                        break
-        elif "body" in payload and "data" in payload["body"]:
-            original_body = base64.urlsafe_b64decode(payload["body"]["data"]).decode()
+        parsed_email = _parse_email(original_msg)
+        message_id = parsed_email.get('message_id') or ""
+        references = parsed_email.get('references') or ""
         
-        combined_message = message + "\n\n" + "Original message:\n" + original_body
-
-        for header in headers:
-            if header['name'].lower() == 'message-id':
-                message_id = header['value']
-            if header['name'].lower() == 'references':
-                references = header['value']
+        combined_message = (
+            f"{message}\n\n"
+            f"---------- Forwarded message ---------\n"
+            f"From: {parsed_email.get('sender')}\n"
+            f"Date: {parsed_email.get('date')}\n"
+            f"Subject: {parsed_email.get('subject')}\n"
+            f"To: {parsed_email.get('recipient')}\n\n"
+            f"{parsed_email.get('body')}"
+        )
         
         email_msg = EmailMessage()
         email_msg.set_content(combined_message)
@@ -567,6 +588,7 @@ def unsubscribe_from_email(email_id: str) -> str:
     explicitly asks to unsubscribe from that sender.
     You MUST provide the Gmail 'email_id' (the 'ID:' field from read_recent_emails or search_emails).
     """
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     sender = "Unknown"
@@ -640,6 +662,7 @@ def block_sender(sender: str):
     Args:
         sender (str): The email address to block.
     """
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     filter_config = {
@@ -665,6 +688,7 @@ def unblock_sender(sender: str) -> str:
     Args:
         sender (str): The email address to unblock.
     """
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:
@@ -697,6 +721,7 @@ def unblock_sender(sender: str) -> str:
 @mcp.tool()
 def list_blocked_senders() -> list[str] | str:
     """Lists all blocked senders in the user's Gmail account."""
+    service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
     try:

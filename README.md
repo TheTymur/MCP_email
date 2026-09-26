@@ -53,7 +53,11 @@ This server currently exposes the following 19 Gmail functions to your AI agents
    - If prompted to configure the OAuth consent screen, set it to "Desktop app".
    - Download the resulting JSON file and rename it to `credentials.json`.
    - Place `credentials.json` directly inside this project folder. *(Note: This file is ignored by Git, so it won't be uploaded!)*
-   - **First Run**: When you run the server for the first time, it will automatically open a browser window asking you to log into your Google Account. It will then generate a `token.json` file for future access.
+   - **First Time Setup (Authentication)**: Because MCP servers run in the background, you must authorize the app manually before connecting it to an MCP client. Run the setup script in your terminal:
+     ```bash
+     python setup_auth.py
+     ```
+     This will open a browser window asking you to log into your Google Account and will generate a `token.json` file for future headless access.
 
 3. **Running the FastMCP Dev Inspector (Recommended for Testing):**
    ```bash
