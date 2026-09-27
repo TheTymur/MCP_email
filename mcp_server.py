@@ -1,3 +1,4 @@
+from mcp.types import ToolAnnotations
 import os
 import socket
 import ipaddress
@@ -10,6 +11,7 @@ from urllib.parse import urlparse, unquote, parse_qs
 from email.message import EmailMessage
 from bs4 import BeautifulSoup
 from fastmcp import FastMCP
+from pydantic import Field
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -126,10 +128,17 @@ def _is_safe_url(url: str):
     return True
 
 # --- Email Reading/Searching Tools ---
-@mcp.tool()
-def read_recent_emails(limit: int = 5) -> str:
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+    )
+)
+def read_recent_emails(limit: int = Field(5, description="The maximum number of emails to return.")) -> str:
     """Reads the most recent emails from the user's Gmail inbox. 
-    IMPORTANT: This returns a list of emails. Each email has an 'ID' field. You MUST save and use this exact 'ID' if you need to read the full content, reply, forward, or delete the email later."""
+    IMPORTANT: This returns a list of emails. Each email has an 'ID' field. You MUST save and use this exact 'ID' if you need to read the full content, reply, forward, or delete the email later.
+    Args:
+        limit (int): The maximum number of emails to return.
+    """
     service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
@@ -153,11 +162,17 @@ def read_recent_emails(limit: int = 5) -> str:
     except Exception as error:
         return f"An error occurred connecting to Gmail: {error}"
 
-@mcp.tool()
-def search_emails(query: str) -> str:
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+    )
+)
+def search_emails(query: str = Field(description="The search query string (like in Gmail search bar).")) -> str:
     """
     Searches for emails in the user's Gmail account based on a query. 
     IMPORTANT: This returns a list of emails. Each email has an 'ID' field. You MUST save and use this exact 'ID' if you need to read the full content, reply, forward, or delete the email later.
+    Args:
+        query (str): The search query string (like in Gmail search bar).
     """
     service = get_gmail_service()
     if not service:
@@ -182,10 +197,17 @@ def search_emails(query: str) -> str:
     except Exception as error:
         return f"An error occurred searching for emails: {error}"
 
-@mcp.tool()
-def read_email_content(email_id: str) -> str:
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+    )
+)
+def read_email_content(email_id: str = Field(description="The ID of the email to read.")) -> str:
     """Reads the full content of a specific email in the user's Gmail account.
-    You MUST provide the 'email_id' parameter. You can find the email_id by first calling the 'read_recent_emails' or 'search_emails' tools and looking for the 'ID:' field in the results."""
+    You MUST provide the 'email_id' parameter. You can find the email_id by first calling the 'read_recent_emails' or 'search_emails' tools and looking for the 'ID:' field in the results.
+    Args:
+        email_id (str): The ID of the email to read.
+    """
     service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
@@ -204,9 +226,20 @@ def read_email_content(email_id: str) -> str:
         return f"An error occurred reading the email content: {error}"
 
 # --- Label Management Tools ---
-@mcp.tool()
-def create_label(label_name: str) -> str:
-    """Creates a new label in the user's Gmail account."""
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+    )
+)
+def create_label(label_name: str = Field(description="The name of the label to create.")) -> str:
+    """Creates a new, empty label in the user's Gmail account.
+    
+    This only creates the label itself. To actually apply this label to an email, you must subsequently call 'apply_label'.
+    If a label with the exact same name already exists, this operation will fail.
+    
+    Args:
+        label_name (str): The name of the new label to create.
+    """
     service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
@@ -220,7 +253,11 @@ def create_label(label_name: str) -> str:
     except Exception as error:
         return f"An error occurred creating the label: {error}"
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+    )
+)
 def list_labels() -> str:
     """Lists all labels in the user's Gmail account."""
     service = get_gmail_service()
@@ -241,9 +278,24 @@ def list_labels() -> str:
     except Exception as error:
         return f"An error occurred listing the labels: {error}"
 
-@mcp.tool()
-def apply_label(email_id: str, label_id: str) -> str:
-    """Applies a label to a message in the user's Gmail account."""
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+    )
+)
+def apply_label(email_id: str = Field(description="The ID of the email."), label_id: str = Field(description="The ID of the label to apply.")) -> str:
+    """Applies an existing label to a specific email message in the user's Gmail account.
+    This is a mutating operation that modifies the email's metadata by attaching the specified label.
+    
+    Prerequisites: The label MUST already exist. If you need to create a new label, use 'create_label' first.
+    If you want to remove a label from an email, use 'remove_label' instead.
+    
+    This tool is idempotent; applying a label that is already attached to the email will succeed with no additional side effects.
+    
+    Args:
+        email_id (str): The ID of the email.
+        label_id (str): The exact ID of the existing label to apply.
+    """
     service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
@@ -255,10 +307,24 @@ def apply_label(email_id: str, label_id: str) -> str:
     except Exception as error:
         return f"An error occurred applying the label: {error}" 
 
-@mcp.tool()
-def remove_label(email_id: str, label_id: str) -> str:
-    """Removes a label from a message in the user's Gmail account.
-    Also you can use this tool to mark email as read by setting the label_id to "UNREAD".
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+    )
+)
+def remove_label(email_id: str = Field(description="The ID of the email."), label_id: str = Field(description="The ID of the label to remove.")) -> str:
+    """Removes a label from a specific email message (untags the email).
+    
+    Also you can use this tool to mark an email as read by setting the label_id to "UNREAD".
+    
+    When to use vs alternatives:
+    - Use this tool when you want to keep the label in the account, but remove it from a specific email.
+    - Do NOT use this tool if you want to permanently destroy the label from the entire account (use 'delete_label' instead).
+    - Do NOT use this tool if you want to delete the email message itself (use 'delete_message' instead).
+    
+    Args:
+        email_id (str): The ID of the email.
+        label_id (str): The ID of the label to remove from this email.
     """
     service = get_gmail_service()
     if not service:
@@ -271,9 +337,26 @@ def remove_label(email_id: str, label_id: str) -> str:
     except Exception as error:
         return f"An error occurred removing the label: {error}" 
 
-@mcp.tool()
-def delete_label(label_id: str) -> str:
-    """Deletes a label from the user's Gmail account. """
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+    )
+)
+def delete_label(label_id: str = Field(description="The ID of the label to delete.")) -> str:
+    """Permanently deletes a label from the user's Gmail account entirely.
+    
+    Prerequisites: The label MUST exist in the user's account. Use 'list_labels' first to verify the label_id.
+    
+    When to use vs alternatives:
+    - Use this tool ONLY when you want to permanently destroy the label itself from the entire Gmail account.
+    - If you only want to remove a label from a specific email (untag the email), use 'remove_label' instead.
+    - If you want to delete an email message entirely, use 'delete_message' instead.
+    
+    Consequences: This is a destructive operation. The label will be permanently deleted and removed from all messages it was attached to. The messages themselves will NOT be deleted. This cannot be undone.
+    
+    Args:
+        label_id (str): The ID of the label to permanently delete.
+    """
     service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
@@ -283,9 +366,16 @@ def delete_label(label_id: str) -> str:
     except Exception as error:
         return f"An error occurred deleting the label: {error}"
 
-@mcp.tool()
-def count_messages_in_label(label_id: str) -> str:
-    """Counts the number of messages in a specific label in the user's Gmail account."""
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+    )
+)
+def count_messages_in_label(label_id: str = Field(description="The ID of the label to count messages for.")) -> str:
+    """Counts the number of messages in a specific label in the user's Gmail account.
+    Args:
+        label_id (str): The ID of the label to count messages for.
+    """
     service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
@@ -297,14 +387,20 @@ def count_messages_in_label(label_id: str) -> str:
         return f"An error occurred counting messages in label '{label_id}': {error}"
 
 # --- Email Management Tools ---
-@mcp.tool()
-def delete_message(email_id: str) -> str:
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+    )
+)
+def delete_message(email_id: str = Field(description="The ID of the email to delete.")) -> str:
     """
     Deletes an email or moves it to the trash. 
     If the user asks to 'trash', 'remove', or 'delete' an email, use this tool. 
     You MUST provide the 'email_id'. Look in the previous tool responses for the exact ID of the email you are trying to delete.
     CRITICAL: NEVER guess or hallucinate the ID. If you don't know the exact ID, you MUST call 'read_recent_emails' or 'search_emails' FIRST and wait for the results. Do NOT call this tool and a search tool in the same turn.
     Note: To undo a deletion, use the `untrash_message` tool.
+    Args:
+        email_id (str): The ID of the email to delete.
     """
     service = get_gmail_service()
     if not service:
@@ -320,11 +416,17 @@ def delete_message(email_id: str) -> str:
     except Exception as error:
         return f"An error occurred deleting the message: {error}"
 
-@mcp.tool()
-def untrash_message(email_id: str) -> str:
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+    )
+)
+def untrash_message(email_id: str = Field(description="The ID of the email to untrash.")) -> str:
     """
     Removes an email from the trash and restores it to the inbox.
     Use this tool if the user asks to undo a deletion, restore a deleted email, or move an email out of the trash.
+    Args:
+        email_id (str): The ID of the email to untrash.
     """
     service = get_gmail_service()
     if not service:
@@ -336,9 +438,24 @@ def untrash_message(email_id: str) -> str:
         return f"An error occurred untrashing the message: {error}"
 
 # --- Draft Management Tools ---
-@mcp.tool()
-def delete_draft(draft_id: str) -> str:
-    """Deletes a draft from the user's Gmail account."""
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+    )
+)
+def delete_draft(draft_id: str = Field(description="The ID of the draft to delete.")) -> str:
+    """Permanently deletes a draft from the user's Gmail account.
+    
+    Prerequisites: The draft MUST already exist. You should find the draft_id by using 'list_drafts' first.
+    
+    When to use: Use this ONLY when the user explicitly asks to cancel, discard, or delete an unsent draft.
+    When NOT to use: Do NOT use this to delete regular sent or received emails (use 'delete_message' instead). Do NOT use this to modify a draft's content (use 'modify_draft' instead).
+    
+    Warning: This is a highly destructive operation. Draft deletions cannot be undone (unlike deleting a regular message which goes to trash).
+    
+    Args:
+        draft_id (str): The ID of the draft to delete.
+    """
     service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
@@ -348,7 +465,11 @@ def delete_draft(draft_id: str) -> str:
     except Exception as error:
         return f"An error occurred deleting the draft: {error}"
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+    )
+)
 def list_drafts() -> str:
     """Lists all drafts and its details (To, Subject, Body) in the user's Gmail account."""
     service = get_gmail_service()
@@ -386,9 +507,18 @@ def list_drafts() -> str:
     except Exception as error:
         return f"An error occurred listing the drafts: {error}"
 
-@mcp.tool()
-def create_draft(to: str, subject: str, message: str) -> str:
-    """Creates a draft with To, Subject and Message in the user's Gmail account."""
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+    )
+)
+def create_draft(to: str = Field(description="The recipient email address."), subject: str = Field(description="The subject of the email."), message: str = Field(description="The body of the email.")) -> str:
+    """Creates a draft with To, Subject and Message in the user's Gmail account.
+    Args:
+        to (str): The recipient email address.
+        subject (str): The subject of the email.
+        message (str): The body of the email.
+    """
     service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
@@ -410,9 +540,20 @@ def create_draft(to: str, subject: str, message: str) -> str:
     except Exception as error:
         return f"An error occurred creating the draft: {error}"
 
-@mcp.tool()
-def modify_draft(draft_id: str, to: str, subject: str, message: str) -> str:
-    """Modifies a draft in the user's Gmail account."""
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+    )
+)
+def modify_draft(draft_id: str = Field(description="The ID of the draft to modify."), to: str = Field(description="The recipient email address."), subject: str = Field(description="The subject of the email."), message: str = Field(description="The body of the email.")) -> str:
+    """Modifies a draft in the user's Gmail account.
+    CRITICAL: This tool ONLY modifies existing drafts. It CANNOT list, view, or manage blocked senders. Do NOT confuse this tool with list_blocked_senders.
+    Args:
+        draft_id (str): The ID of the draft to modify.
+        to (str): The recipient email address.
+        subject (str): The subject of the email.
+        message (str): The body of the email.
+    """
     service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
@@ -455,11 +596,17 @@ def modify_draft(draft_id: str, to: str, subject: str, message: str) -> str:
     except Exception as error:
         return f"An error occurred modifying the draft: {error}"
 
-@mcp.tool()
-def send_draft(draft_id: str) -> str:
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+    )
+)
+def send_draft(draft_id: str = Field(description="The ID of the draft to send.")) -> str:
     """Sends an existing draft email. 
     CRITICAL: MUST ONLY BE USED AFTER EXPLICIT USER APPROVAL of the draft content.
     CRITICAL: You MUST NOT call this tool in the same turn as 'create_draft', 'create_response_draft', or 'forward_email'. You must create the draft first, show it to the user, and wait for their approval in the next turn before sending.
+    Args:
+        draft_id (str): The ID of the draft to send.
     """
     service = get_gmail_service()
     if not service:
@@ -471,10 +618,14 @@ def send_draft(draft_id: str) -> str:
     except Exception as error:
         return f"An error occurred sending the draft: {error}"
 
-@mcp.tool()
-def create_response_draft(to: str, subject: str, message: str, in_reply_to: str) -> str:
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+    )
+)
+def create_response_draft(to: str = Field(description="The recipient email address."), subject: str = Field(description="The subject of the email."), message: str = Field(description="The body of the email."), in_reply_to: str = Field(description="The Message-ID of the email being replied to.")) -> str:
     """Creates a draft reply to an email using the in_reply_to field to thread it correctly. Use if user wants to reply to an email. Not to confuse with create_draft function.
-    
+    CRITICAL: This tool ONLY creates drafts. It CANNOT list, view, or manage blocked senders. Do NOT confuse this tool with list_blocked_senders.
     Args:
         to (str): The recipient of the email.
         subject (str): The subject of the email.
@@ -524,10 +675,14 @@ def create_response_draft(to: str, subject: str, message: str, in_reply_to: str)
         return f"An error occurred creating the draft: {error}"
 
 
-@mcp.tool()
-def forward_email(to: str, subject: str, message: str, in_reply_to: str) -> str:
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+    )
+)
+def forward_email(to: str = Field(description="The recipient email address."), subject: str = Field(description="The subject of the email."), message: str = Field(description="The body of the email."), in_reply_to: str = Field(description="The Message-ID of the email being forwarded.")) -> str:
     """Forwards an email using the in_reply_to field to thread it correctly. Use if user wants to forward an email.
-    
+    CRITICAL: This tool ONLY forwards emails. It CANNOT list, view, or manage blocked senders. Do NOT confuse this tool with list_blocked_senders.
     Args:
         to (str): The recipient of the email.
         subject (str): The subject of the email.
@@ -581,12 +736,18 @@ def forward_email(to: str, subject: str, message: str, in_reply_to: str) -> str:
         return f"An error occurred creating the draft: {error}"
 
 # --- Misc Tools ---
-@mcp.tool()
-def unsubscribe_from_email(email_id: str) -> str:
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+    )
+)
+def unsubscribe_from_email(email_id: str = Field(description="The ID of the email to unsubscribe from.")) -> str:
     """Unsubscribes the user from a mailing list using the email's List-Unsubscribe header.
     This sends an email or a web request on the user's behalf, so ONLY call it after the user
     explicitly asks to unsubscribe from that sender.
     You MUST provide the Gmail 'email_id' (the 'ID:' field from read_recent_emails or search_emails).
+    Args:
+        email_id (str): The ID of the email to unsubscribe from.
     """
     service = get_gmail_service()
     if not service:
@@ -655,10 +816,13 @@ def unsubscribe_from_email(email_id: str) -> str:
     except Exception as e:
         return f"An error occurred unsubscribing from {sender}: {e}"
 
-@mcp.tool()
-def block_sender(sender: str):
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+    )
+)
+def block_sender(sender: str = Field(description="The email address to block.")) -> str:
     """Blocks an email sender by creating a filter to move all their emails to the trash.
-
     Args:
         sender (str): The email address to block.
     """
@@ -681,10 +845,13 @@ def block_sender(sender: str):
     except Exception as e:
         return f"An error occurred blocking {sender}: {e}"
 
-@mcp.tool()
-def unblock_sender(sender: str) -> str:
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+    )
+)
+def unblock_sender(sender: str = Field(description="The email address to unblock.")) -> str:
     """Unblocks an email sender by finding and removing their specific filter.
-
     Args:
         sender (str): The email address to unblock.
     """
@@ -718,9 +885,15 @@ def unblock_sender(sender: str) -> str:
     except Exception as e:
         return f"An error occurred unblocking {sender}: {e}"
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+    )
+)
 def list_blocked_senders() -> list[str] | str:
-    """Lists all blocked senders in the user's Gmail account."""
+    """Lists all blocked senders in the user's Gmail account.
+    CRITICAL: This tool ONLY lists blocked senders. It CANNOT create, modify, or forward drafts/emails. Do NOT confuse this tool with modify_draft, create_response_draft, or forward_email.
+    """
     service = get_gmail_service()
     if not service:
         return "Error: Gmail service is not authenticated."
