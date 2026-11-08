@@ -363,7 +363,7 @@ def download_attachment(
         return f"An error occurred downloading the attachment: {error}"
 
 
-# Label Management Tools 
+# Label Management Tools
 @mcp.tool(
     annotations=ToolAnnotations(
         readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
